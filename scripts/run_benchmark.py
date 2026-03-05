@@ -15,7 +15,9 @@ import json
 import os
 import random
 import re
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
@@ -253,59 +255,186 @@ def call_api(client, model, messages, timeout, max_retries=2):
     return None
 
 
-def run_material_figbench(client, model, samples, image_files_map, headers, output_dir, timeout, max_retries):
+def process_figbench_sample(args_tuple):
+    """Process a single MaterialFigBench sample (for parallel execution)"""
+    sample, model, image_files_map, headers, timeout, max_retries, pbar_lock = args_tuple
+    
+    # Load images
+    image_contents = []
+    image_error = False
+    for img_file in sample['image_files']:
+        img_base64 = load_image_base64(img_file, image_files_map, headers)
+        if img_base64 is None:
+            image_error = True
+            break
+        image_contents.append({
+            "type": "image_url",
+            "image_url": {"url": f"data:image/png;base64,{img_base64}"}
+        })
+    
+    if image_error:
+        return None
+    
+    # Build messages
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": [
+            {"type": "text", "text": sample['problem_sentence']},
+            *image_contents
+        ]}
+    ]
+    
+    # Create a new client for this thread
+    client = OpenAI(
+        base_url="http://localhost:8001/v1",
+        api_key="not-needed"
+    )
+    
+    # Call API
+    try:
+        prediction = call_api(client, model, messages, timeout, max_retries)
+    except Exception as e:
+        prediction = None
+    
+    # Check correctness
+    correct = check_correct(prediction, sample['ground_truth'], sample['answer_range_2'])
+    
+    return {
+        'question_id': sample['question_id'],
+        'problem_sentence': sample['problem_sentence'],
+        'image_files': ';'.join(sample['image_files']),
+        'prediction': prediction,
+        'ground_truth': sample['ground_truth'],
+        'answer_range_2': sample['answer_range_2'],
+        'correct': correct
+    }
+
+
+def process_choice_sample(args_tuple):
+    """Process a single MaterialBENCH choice sample (for parallel execution)"""
+    sample, model, timeout, max_retries = args_tuple
+    
+    prompt = f"""{sample['problem_sentence']}
+
+a) {sample['choices_a']}
+b) {sample['choices_b']}
+c) {sample['choices_c']}
+d) {sample['choices_d']}
+
+Respond with only the letter (a, b, c, or d)."""
+
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": prompt}
+    ]
+    
+    # Create a new client for this thread
+    client = OpenAI(
+        base_url="http://localhost:8001/v1",
+        api_key="not-needed"
+    )
+    
+    # Call API
+    try:
+        prediction = call_api(client, model, messages, timeout, max_retries)
+        if prediction:
+            match = re.search(r'\b([abcd])\b', prediction.lower())
+            if match:
+                prediction = match.group(1)
+            else:
+                prediction = prediction.strip().lower()
+    except Exception as e:
+        prediction = None
+    
+    # Check correctness
+    correct = normalize(prediction) == normalize(sample['correct_choice'])
+    
+    return {
+        'question_id': sample['question_id'],
+        'problem_sentence': sample['problem_sentence'],
+        'choices_a': sample['choices_a'],
+        'choices_b': sample['choices_b'],
+        'choices_c': sample['choices_c'],
+        'choices_d': sample['choices_d'],
+        'prediction': prediction,
+        'correct_choice': sample['correct_choice'],
+        'correct': correct
+    }
+
+
+def process_free_sample(args_tuple):
+    """Process a single MaterialBENCH free sample (for parallel execution)"""
+    sample, model, timeout, max_retries = args_tuple
+    
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": sample['problem_sentence']}
+    ]
+    
+    # Create a new client for this thread
+    client = OpenAI(
+        base_url="http://localhost:8001/v1",
+        api_key="not-needed"
+    )
+    
+    # Call API
+    try:
+        prediction = call_api(client, model, messages, timeout, max_retries)
+    except Exception as e:
+        prediction = None
+    
+    # Check correctness
+    correct = check_correct(prediction, sample['correct_answer'])
+    
+    return {
+        'question_id': sample['question_id'],
+        'problem_sentence': sample['problem_sentence'],
+        'prediction': prediction,
+        'correct_answer': sample['correct_answer'],
+        'correct': correct
+    }
+
+
+def run_material_figbench(client, model, samples, image_files_map, headers, output_dir, timeout, max_retries, num_threads=1):
     """Run benchmark for MaterialFigBench"""
     results = []
+    failed_count = 0
     
     print(f"\nRunning MaterialFigBench benchmark ({len(samples)} samples)...")
     print(f"Images will be cached in ~/.cache/material_bench/images/")
+    print(f"Using {num_threads} thread(s)...")
     
-    for sample in tqdm(samples, desc="MaterialFigBench"):
-        # Load images
-        image_contents = []
-        image_error = False
-        for img_file in sample['image_files']:
-            img_base64 = load_image_base64(img_file, image_files_map, headers)
-            if img_base64 is None:
-                print(f"\nWarning: Failed to load image {img_file}, skipping this sample")
-                image_error = True
-                break
-            image_contents.append({
-                "type": "image_url",
-                "image_url": {"url": f"data:image/png;base64,{img_base64}"}
-            })
-        
-        if image_error:
-            continue
-        
-        # Build messages
-        messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": [
-                {"type": "text", "text": sample['problem_sentence']},
-                *image_contents
-            ]}
-        ]
-        
-        # Call API
-        try:
-            prediction = call_api(client, model, messages, timeout, max_retries)
-        except Exception as e:
-            print(f"\nError calling API for question {sample['question_id']}: {e}")
-            prediction = None
-        
-        # Check correctness
-        correct = check_correct(prediction, sample['ground_truth'], sample['answer_range_2'])
-        
-        results.append({
-            'question_id': sample['question_id'],
-            'problem_sentence': sample['problem_sentence'],
-            'image_files': ';'.join(sample['image_files']),
-            'prediction': prediction,
-            'ground_truth': sample['ground_truth'],
-            'answer_range_2': sample['answer_range_2'],
-            'correct': correct
-        })
+    # Prepare arguments for each sample
+    sample_args = [
+        (sample, model, image_files_map, headers, timeout, max_retries, None)
+        for sample in samples
+    ]
+    
+    if num_threads == 1:
+        # Sequential execution
+        for sample in tqdm(samples, desc="MaterialFigBench"):
+            args = (sample, model, image_files_map, headers, timeout, max_retries, None)
+            result = process_figbench_sample(args)
+            if result is None:
+                failed_count += 1
+            else:
+                results.append(result)
+    else:
+        # Parallel execution
+        with ThreadPoolExecutor(max_workers=num_threads) as executor:
+            futures = {executor.submit(process_figbench_sample, args): args[0] for args in sample_args}
+            
+            with tqdm(total=len(samples), desc="MaterialFigBench") as pbar:
+                for future in as_completed(futures):
+                    result = future.result()
+                    if result is None:
+                        failed_count += 1
+                    else:
+                        results.append(result)
+                    pbar.update(1)
+    
+    if failed_count > 0:
+        print(f"Warning: {failed_count} samples failed")
     
     # Save results
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -317,56 +446,42 @@ def run_material_figbench(client, model, samples, image_files_map, headers, outp
     return results
 
 
-def run_materialbench_choice(client, model, samples, output_dir, timeout, max_retries):
+def run_materialbench_choice(client, model, samples, output_dir, timeout, max_retries, num_threads=1):
     """Run benchmark for MaterialBENCH choice"""
     results = []
+    failed_count = 0
     
     print(f"\nRunning MaterialBENCH choice benchmark ({len(samples)} samples)...")
+    print(f"Using {num_threads} thread(s)...")
     
-    for sample in tqdm(samples, desc="MaterialBENCH choice"):
-        # Build prompt
-        prompt = f"""{sample['problem_sentence']}
-
-a) {sample['choices_a']}
-b) {sample['choices_b']}
-c) {sample['choices_c']}
-d) {sample['choices_d']}
-
-Respond with only the letter (a, b, c, or d)."""
-        
-        messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": prompt}
-        ]
-        
-        # Call API
-        try:
-            prediction = call_api(client, model, messages, timeout, max_retries)
-            # Extract just the letter
-            if prediction:
-                match = re.search(r'\b([abcd])\b', prediction.lower())
-                if match:
-                    prediction = match.group(1)
-                else:
-                    prediction = prediction.strip().lower()
-        except Exception as e:
-            print(f"\nError calling API for question {sample['question_id']}: {e}")
-            prediction = None
-        
-        # Check correctness
-        correct = normalize(prediction) == normalize(sample['correct_choice'])
-        
-        results.append({
-            'question_id': sample['question_id'],
-            'problem_sentence': sample['problem_sentence'],
-            'choices_a': sample['choices_a'],
-            'choices_b': sample['choices_b'],
-            'choices_c': sample['choices_c'],
-            'choices_d': sample['choices_d'],
-            'prediction': prediction,
-            'correct_choice': sample['correct_choice'],
-            'correct': correct
-        })
+    # Prepare arguments for each sample
+    sample_args = [
+        (sample, model, timeout, max_retries)
+        for sample in samples
+    ]
+    
+    if num_threads == 1:
+        # Sequential execution
+        for sample in tqdm(samples, desc="MaterialBENCH choice"):
+            args = (sample, model, timeout, max_retries)
+            result = process_choice_sample(args)
+            results.append(result)
+    else:
+        # Parallel execution
+        with ThreadPoolExecutor(max_workers=num_threads) as executor:
+            futures = {executor.submit(process_choice_sample, args): args[0] for args in sample_args}
+            
+            with tqdm(total=len(samples), desc="MaterialBENCH choice") as pbar:
+                for future in as_completed(futures):
+                    result = future.result()
+                    if result is None:
+                        failed_count += 1
+                    else:
+                        results.append(result)
+                    pbar.update(1)
+    
+    if failed_count > 0:
+        print(f"Warning: {failed_count} samples failed")
     
     # Save results
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -378,35 +493,42 @@ Respond with only the letter (a, b, c, or d)."""
     return results
 
 
-def run_materialbench_free(client, model, samples, output_dir, timeout, max_retries):
+def run_materialbench_free(client, model, samples, output_dir, timeout, max_retries, num_threads=1):
     """Run benchmark for MaterialBENCH free"""
     results = []
+    failed_count = 0
     
     print(f"\nRunning MaterialBENCH free benchmark ({len(samples)} samples)...")
+    print(f"Using {num_threads} thread(s)...")
     
-    for sample in tqdm(samples, desc="MaterialBENCH free"):
-        messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": sample['problem_sentence']}
-        ]
-        
-        # Call API
-        try:
-            prediction = call_api(client, model, messages, timeout, max_retries)
-        except Exception as e:
-            print(f"\nError calling API for question {sample['question_id']}: {e}")
-            prediction = None
-        
-        # Check correctness
-        correct = check_correct(prediction, sample['correct_answer'])
-        
-        results.append({
-            'question_id': sample['question_id'],
-            'problem_sentence': sample['problem_sentence'],
-            'prediction': prediction,
-            'correct_answer': sample['correct_answer'],
-            'correct': correct
-        })
+    # Prepare arguments for each sample
+    sample_args = [
+        (sample, model, timeout, max_retries)
+        for sample in samples
+    ]
+    
+    if num_threads == 1:
+        # Sequential execution
+        for sample in tqdm(samples, desc="MaterialBENCH free"):
+            args = (sample, model, timeout, max_retries)
+            result = process_free_sample(args)
+            results.append(result)
+    else:
+        # Parallel execution
+        with ThreadPoolExecutor(max_workers=num_threads) as executor:
+            futures = {executor.submit(process_free_sample, args): args[0] for args in sample_args}
+            
+            with tqdm(total=len(samples), desc="MaterialBENCH free") as pbar:
+                for future in as_completed(futures):
+                    result = future.result()
+                    if result is None:
+                        failed_count += 1
+                    else:
+                        results.append(result)
+                    pbar.update(1)
+    
+    if failed_count > 0:
+        print(f"Warning: {failed_count} samples failed")
     
     # Save results
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -499,6 +621,8 @@ def main():
                         help='API timeout in seconds')
     parser.add_argument('--max-retries', type=int, default=2,
                         help='Maximum number of retries')
+    parser.add_argument('--num-threads', type=int, default=1,
+                        help='Number of parallel threads for API calls')
     
     args = parser.parse_args()
     
@@ -528,7 +652,7 @@ def main():
             )
             results = run_material_figbench(
                 client, args.model, samples, image_files_map, headers,
-                output_dir, args.timeout, args.max_retries
+                output_dir, args.timeout, args.max_retries, args.num_threads
             )
             all_results['material-figbench'] = results
         
@@ -537,7 +661,7 @@ def main():
                 args.hf_token, args.max_samples, args.seed
             )
             results = run_materialbench_choice(
-                client, args.model, samples, output_dir, args.timeout, args.max_retries
+                client, args.model, samples, output_dir, args.timeout, args.max_retries, args.num_threads
             )
             all_results['materialbench-choice'] = results
         
@@ -546,7 +670,7 @@ def main():
                 args.hf_token, args.max_samples, args.seed
             )
             results = run_materialbench_free(
-                client, args.model, samples, output_dir, args.timeout, args.max_retries
+                client, args.model, samples, output_dir, args.timeout, args.max_retries, args.num_threads
             )
             all_results['materialbench-free'] = results
     
