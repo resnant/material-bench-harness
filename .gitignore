@@ -1,0 +1,17 @@
+# pixi
+.pixi/
+
+# results
+results/
+
+# python
+__pycache__/
+*.pyc
+*.pyo
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store

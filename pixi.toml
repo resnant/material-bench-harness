@@ -1,0 +1,13 @@
+[workspace]
+name = "material_bench"
+channels = ["conda-forge"]
+platforms = ["osx-arm64", "linux-64"]
+
+[dependencies]
+python = ">=3.10"
+datasets = "*"
+openai = "*"
+pillow = "*"
+pandas = "*"
+requests = "*"
+tqdm = "*"
