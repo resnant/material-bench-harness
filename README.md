@@ -73,6 +73,11 @@ pixi run python scripts/run_benchmark.py \
 | `--timeout` | API タイムアウト（秒） | `300` |
 | `--max-retries` | 最大リトライ回数 | `2` |
 | `--num-threads` | 並列スレッド数（1 でシーケンシャル） | `1` |
+| `--use-llm-judge` | LLM による評価を実行するフラグ | `False` |
+| `--judge-api-base` | LLM judge 用 API ベース URL | `--api-base` と同じ |
+| `--judge-model` | LLM judge 用モデル名 | `--model` と同じ |
+| `--judge-num-threads` | LLM judge の並列スレッド数 | `--num-threads` と同じ |
+| `--judge-timeout` | LLM judge の API タイムアウト（秒） | `60` |
 
 ### 出力ファイル
 
@@ -94,6 +99,7 @@ results/
 - `ground_truth`: 正解
 - `answer_range_2`: 正解範囲（数値範囲用）
 - `correct`: 正誤（True/False）
+- `llm_judge_correct`: LLM による正誤判定（--use-llm-judge オプション使用時）
 
 **MaterialBENCH choice:**
 - `question_id`: 問題 ID
@@ -102,13 +108,15 @@ results/
 - `prediction`: モデルの回答（a/b/c/d）
 - `correct_choice`: 正解
 - `correct`: 正誤
+- `llm_judge_correct`: LLM による正誤判定（--use-llm-judge オプション使用時）
 
 **MaterialBENCH free:**
 - `question_id`: 問題 ID
 - `problem_sentence`: 問題文
 - `prediction`: モデルの回答
 - `correct_answer`: 正解
-- `correct`: 正誤
+- `correct`: 正誤（完全一致または数値許容誤差）
+- `llm_judge_correct`: LLM による正誤判定（--use-llm-judge オプション使用時）
 
 #### サマリー JSON
 
@@ -119,13 +127,18 @@ results/
     "materialbench-choice": {
       "total": 164,
       "correct": 120,
-      "accuracy": 0.732
+      "accuracy": 0.732,
+      "llm_judge_correct": 135,
+      "llm_judge_accuracy": 0.823
     }
   },
   "overall": {
     "total": 164,
     "correct": 120,
-    "accuracy": 0.732
+    "accuracy": 0.732,
+    "llm_judge_total": 164,
+    "llm_judge_correct": 135,
+    "llm_judge_accuracy": 0.823
   }
 }
 ```
