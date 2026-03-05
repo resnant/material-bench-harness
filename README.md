@@ -48,6 +48,14 @@ pixi run python scripts/run_benchmark.py \
   --api-base http://localhost:8001 \
   --max-samples 10 \
   --seed 42
+
+# 並列実行で高速化（3スレッド）
+pixi run python scripts/run_benchmark.py \
+  --dataset materialbench-choice \
+  --api-base http://localhost:8001 \
+  --max-samples 10 \
+  --num-threads 3 \
+  --output-dir ./results
 ```
 
 ### オプション
@@ -64,6 +72,7 @@ pixi run python scripts/run_benchmark.py \
 | `--hf-token` | HuggingFace トークン（レート制限回避） | `None` |
 | `--timeout` | API タイムアウト（秒） | `300` |
 | `--max-retries` | 最大リトライ回数 | `2` |
+| `--num-threads` | 並列スレッド数（1 でシーケンシャル） | `1` |
 
 ### 出力ファイル
 
@@ -152,9 +161,9 @@ results/
 - [ ] エラーログの改善（失敗サンプルの理由記録）
 
 ### 中期
+- [x] バッチ処理の最適化（並列推論）
 - [ ] LLM による評価オプション（自由記述問題の柔軟な判定）
 - [ ] flexeval 統合の検討
-- [ ] バッチ処理の最適化（並列推論）
 - [ ] プログレス表示の改善（残り時間予測）
 
 ### 長期
@@ -172,3 +181,11 @@ results/
 ## ライセンス
 
 MIT
+
+## 性能参考
+
+| データセット | 件数 | スレッド数 | 実行時間 |
+|-------------|------|-----------|---------|
+| materialbench-choice | 10 | 1 | ~4分 |
+| materialbench-choice | 10 | 3 | ~2分44秒 |
+| materialbench-choice | 10 | 5 | ~2分 |
