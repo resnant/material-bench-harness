@@ -31,7 +31,9 @@ from tqdm import tqdm
 
 SYSTEM_PROMPT = """You are an expert in materials science and engineering. 
 Answer the following questions accurately based on your knowledge and the provided information.
-For multiple choice questions, respond with only the letter (a, b, c, or d)."""
+For multiple choice questions, respond with only the letter (a, b, c, or d).
+For other questions, provide your final answer in the format: **Answer:** [your answer]
+Keep your explanation concise and put the final answer at the end."""
 
 
 def extract_answer_from_text(text):
@@ -139,8 +141,8 @@ def check_correct(prediction, ground_truth, answer_range_2=None):
     try:
         pred_num = float(pred)
         truth_num = float(truth)
-        # 5% tolerance for numeric answers
-        tolerance = abs(truth_num) * 0.05
+        # 1% tolerance for numeric answers
+        tolerance = abs(truth_num) * 0.01
         return abs(pred_num - truth_num) <= tolerance
     except (ValueError, TypeError):
         pass
