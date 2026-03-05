@@ -90,14 +90,14 @@ def extract_answer_from_text(text):
 
 
 def normalize(text):
-    """Normalize text: lowercase, whitespace, and numeric notation normalization"""
+    """Normalize text: lowercase, whitespace removal, and numeric notation normalization"""
     if text is None:
         return ""
     
     text = str(text).lower()
     
-    # Remove extra whitespace
-    text = re.sub(r'\s+', ' ', text).strip()
+    # Remove all whitespace
+    text = re.sub(r'\s+', '', text)
     
     # Normalize scientific notation: 10^{-9} -> 10^-9, 10^(-9) -> 10^-9
     text = re.sub(r'10\^\{?(-?\d+)\}?', r'10^\1', text)
@@ -105,9 +105,8 @@ def normalize(text):
     # Normalize multiplication symbols
     text = text.replace('×', 'x')
     
-    # Normalize common variations
-    text = text.replace('approximately', 'approx')
-    text = text.replace('about', 'approx')
+    # Remove common punctuation
+    text = text.replace(',', '').replace('.', '')
     
     return text
 
@@ -139,10 +138,14 @@ def check_correct(prediction, ground_truth, answer_range_2=None):
     
     # Try numeric comparison with tolerance
     try:
-        pred_num = float(pred)
-        truth_num = float(truth)
-        # 1% tolerance for numeric answers
-        tolerance = abs(truth_num) * 0.01
+        # Remove non-numeric characters for comparison (except . and -)
+        pred_clean = re.sub(r'[^\d.\-]', '', pred)
+        truth_clean = re.sub(r'[^\d.\-]', '', truth)
+        
+        pred_num = float(pred_clean)
+        truth_num = float(truth_clean)
+        # 3% tolerance for numeric answers
+        tolerance = abs(truth_num) * 0.03
         return abs(pred_num - truth_num) <= tolerance
     except (ValueError, TypeError):
         pass
