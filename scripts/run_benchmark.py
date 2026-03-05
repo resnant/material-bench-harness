@@ -34,22 +34,94 @@ Answer the following questions accurately based on your knowledge and the provid
 For multiple choice questions, respond with only the letter (a, b, c, or d)."""
 
 
-def normalize(text):
-    """Normalize text: lowercase and whitespace normalization"""
+def extract_answer_from_text(text):
+    """
+    Extract the final answer from model's verbose response.
+    
+    Priority:
+    1. Text after **Answer:** or **Answer**
+    2. Bolded numbers
+    3. Last number in text
+    """
     if text is None:
         return ""
+    
+    text = str(text)
+    
+    # Pattern 1: Extract after **Answer:**
+    answer_patterns = [
+        r'\*\*Answer:\*\*\s*[:\s]*(.*?)(?:\n|$)',
+        r'\*\*Answer\*\*\s*[:\s]*(.*?)(?:\n|$)',
+        r'Answer:\s*(.*?)(?:\n|$)',
+    ]
+    
+    for pattern in answer_patterns:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            answer_part = match.group(1).strip()
+            if answer_part and len(answer_part) < 100:
+                # Extract number from answer part if it's long
+                num_match = re.search(r'(\d+\.?\d*\s*(?:×|x|\\times)?\s*10\^?[-+]?\d+|\d+\.?\d*)', answer_part)
+                if num_match:
+                    return num_match.group(1)
+                return answer_part
+    
+    # Pattern 2: Bolded numbers
+    bold_numbers = re.findall(r'\*\*\s*(\d+\.?\d*\s*(?:×|x|\\times)?\s*10\^?[-+]?\d+|\d+\.?\d*)\s*\*\*', text)
+    if bold_numbers:
+        return bold_numbers[-1]
+    
+    # Pattern 3: Last bold block
+    bold_blocks = re.findall(r'\*\*(.+?)\*\*', text)
+    if bold_blocks:
+        last_block = bold_blocks[-1].strip()
+        num_match = re.search(r'(\d+\.?\d*\s*(?:×|x|\\times)?\s*10\^?[-+]?\d+|\d+\.?\d*)', last_block)
+        if num_match:
+            return num_match.group(1)
+    
+    # Pattern 4: Last number in text
+    all_numbers = re.findall(r'(\d+\.?\d*)', text)
+    if all_numbers:
+        return all_numbers[-1]
+    
+    return text
+
+
+def normalize(text):
+    """Normalize text: lowercase, whitespace, and numeric notation normalization"""
+    if text is None:
+        return ""
+    
     text = str(text).lower()
+    
+    # Remove extra whitespace
     text = re.sub(r'\s+', ' ', text).strip()
+    
+    # Normalize scientific notation: 10^{-9} -> 10^-9, 10^(-9) -> 10^-9
+    text = re.sub(r'10\^\{?(-?\d+)\}?', r'10^\1', text)
+    
+    # Normalize multiplication symbols
+    text = text.replace('×', 'x')
+    
+    # Normalize common variations
+    text = text.replace('approximately', 'approx')
+    text = text.replace('about', 'approx')
+    
     return text
 
 
 def check_correct(prediction, ground_truth, answer_range_2=None):
     """
     Check if prediction is correct.
+    - First extract the answer from verbose model response
     - For numeric ranges (e.g., "0.0825-0.0975"): check if answer is within range
+    - For numeric answers: check with tolerance
     - Otherwise: normalized exact match
     """
-    pred = normalize(prediction)
+    # Extract answer from verbose response
+    extracted_answer = extract_answer_from_text(prediction)
+    
+    pred = normalize(extracted_answer)
     truth = normalize(ground_truth)
     
     # Numeric range check
@@ -63,6 +135,17 @@ def check_correct(prediction, ground_truth, answer_range_2=None):
             except (ValueError, TypeError):
                 pass
     
+    # Try numeric comparison with tolerance
+    try:
+        pred_num = float(pred)
+        truth_num = float(truth)
+        # 5% tolerance for numeric answers
+        tolerance = abs(truth_num) * 0.05
+        return abs(pred_num - truth_num) <= tolerance
+    except (ValueError, TypeError):
+        pass
+    
+    # Exact match after normalization
     return pred == truth
 
 
