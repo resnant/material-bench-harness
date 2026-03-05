@@ -7,6 +7,7 @@ Usage:
     python scripts/run_benchmark.py --dataset materialbench-choice --api-base http://localhost:8001
     python scripts/run_benchmark.py --dataset materialbench-free --api-base http://localhost:8001
     python scripts/run_benchmark.py --dataset all --api-base http://localhost:8001
+    python scripts/run_benchmark.py --dataset all --api-base http://localhost:8001 --use-llm-judge
 """
 
 import argparse
@@ -628,7 +629,131 @@ def run_materialbench_free(client, model, samples, output_dir, timeout, max_retr
     return results
 
 
-def calculate_summary(all_results, output_dir):
+JUDGE_SYSTEM_PROMPT = """You are evaluating answers for a materials science benchmark.
+Determine if the model's prediction is correct compared to the ground truth.
+
+Criteria:
+- Meaning is correct (minor wording differences are OK)
+- Numeric values within 1% error are acceptable
+- Notation variations are acceptable
+
+Respond with only "CORRECT" or "INCORRECT"."""
+
+
+def llm_judge_answer(problem, prediction, ground_truth, client, model, timeout=60):
+    """
+    Use LLM to judge if the prediction is correct compared to ground truth.
+    Returns True if CORRECT, False if INCORRECT or error.
+    """
+    if prediction is None or prediction == '':
+        return False
+    
+    prompt = f"""Problem: {problem}
+Model Prediction: {prediction}
+Ground Truth: {ground_truth}"""
+    
+    messages = [
+        {"role": "system", "content": JUDGE_SYSTEM_PROMPT},
+        {"role": "user", "content": prompt}
+    ]
+    
+    try:
+        response = client.chat.completions.create(
+            model=model,
+            messages=messages,
+            timeout=timeout
+        )
+        judgment = response.choices[0].message.content.strip().upper()
+        return "CORRECT" in judgment
+    except Exception:
+        return False
+
+
+def llm_judge_sample(args_tuple):
+    """Process a single sample for LLM judge (for parallel execution)"""
+    sample, client, model, problem_column, timeout = args_tuple
+    
+    problem = sample.get(problem_column, '')
+    prediction = sample.get('prediction', '')
+    
+    if 'ground_truth' in sample:
+        ground_truth = sample.get('ground_truth', '')
+    elif 'correct_answer' in sample:
+        ground_truth = sample.get('correct_answer', '')
+    elif 'correct_choice' in sample:
+        ground_truth = sample.get('correct_choice', '')
+    else:
+        ground_truth = ''
+    
+    is_correct = llm_judge_answer(problem, prediction, ground_truth, client, model, timeout)
+    
+    result = sample.copy()
+    result['llm_judge_correct'] = is_correct
+    return result
+
+
+def run_llm_judge_on_results(results, problem_column, client, model, num_threads=1, timeout=60):
+    """Run LLM judge on a list of results"""
+    if not results:
+        return []
+    
+    print(f"\nRunning LLM judge on {len(results)} samples...")
+    print(f"Using {num_threads} thread(s)...")
+    
+    sample_args = [
+        (result, client, model, problem_column, timeout)
+        for result in results
+    ]
+    
+    judged_results = []
+    
+    if num_threads == 1:
+        for result in tqdm(results, desc="LLM Judge"):
+            args = (result, client, model, problem_column, timeout)
+            judged_result = llm_judge_sample(args)
+            judged_results.append(judged_result)
+    else:
+        with ThreadPoolExecutor(max_workers=num_threads) as executor:
+            futures = {executor.submit(llm_judge_sample, args): args[0] for args in sample_args}
+            
+            with tqdm(total=len(results), desc="LLM Judge") as pbar:
+                for future in as_completed(futures):
+                    judged_result = future.result()
+                    judged_results.append(judged_result)
+                    pbar.update(1)
+    
+    correct_count = sum(1 for r in judged_results if r.get('llm_judge_correct', False))
+    print(f"LLM Judge Accuracy: {correct_count}/{len(judged_results)} ({correct_count/len(judged_results):.2%})")
+    
+    return judged_results
+
+
+def load_and_judge_csv(csv_file, client, model, num_threads=1, timeout=60):
+    """Load a CSV file, run LLM judge, and save the results"""
+    df = pd.read_csv(csv_file)
+    results = df.to_dict('records')
+    
+    if 'problem_sentence' in df.columns:
+        problem_column = 'problem_sentence'
+    else:
+        print(f"Warning: problem_sentence column not found in {csv_file}")
+        return None
+    
+    judged_results = run_llm_judge_on_results(results, problem_column, client, model, num_threads, timeout)
+    
+    if not judged_results:
+        return None
+    
+    df_judged = pd.DataFrame(judged_results)
+    
+    output_file = str(csv_file).replace('.csv', '_judged.csv')
+    df_judged.to_csv(output_file, index=False)
+    print(f"Judged results saved to {output_file}")
+    
+    return judged_results
+
+
+def calculate_summary(all_results, output_dir, llm_judge_results=None):
     """Calculate and save summary statistics"""
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     
@@ -658,11 +783,29 @@ def calculate_summary(all_results, output_dir):
         
         summary['overall']['total'] += total
         summary['overall']['correct'] += correct
+        
+        if llm_judge_results and dataset_name in llm_judge_results:
+            llm_results = llm_judge_results[dataset_name]
+            llm_correct = sum(1 for r in llm_results if r.get('llm_judge_correct', False))
+            summary['datasets'][dataset_name]['llm_judge_correct'] = llm_correct
+            summary['datasets'][dataset_name]['llm_judge_accuracy'] = llm_correct / len(llm_results) if len(llm_results) > 0 else 0.0
     
     if summary['overall']['total'] > 0:
         summary['overall']['accuracy'] = summary['overall']['correct'] / summary['overall']['total']
     
-    # Print summary
+    if llm_judge_results:
+        summary['overall']['llm_judge_total'] = sum(
+            len(r) for r in llm_judge_results.values()
+        )
+        summary['overall']['llm_judge_correct'] = sum(
+            sum(1 for r in results if r.get('llm_judge_correct', False))
+            for results in llm_judge_results.values()
+        )
+        if summary['overall']['llm_judge_total'] > 0:
+            summary['overall']['llm_judge_accuracy'] = (
+                summary['overall']['llm_judge_correct'] / summary['overall']['llm_judge_total']
+            )
+    
     print("\n" + "=" * 60)
     print("BENCHMARK SUMMARY")
     print("=" * 60)
@@ -671,13 +814,19 @@ def calculate_summary(all_results, output_dir):
         print(f"  Total: {stats['total']}")
         print(f"  Correct: {stats['correct']}")
         print(f"  Accuracy: {stats['accuracy']:.2%}")
+        if 'llm_judge_accuracy' in stats:
+            print(f"  LLM Judge Correct: {stats['llm_judge_correct']}")
+            print(f"  LLM Judge Accuracy: {stats['llm_judge_accuracy']:.2%}")
     
     print(f"\nOverall:")
     print(f"  Total: {summary['overall']['total']}")
     print(f"  Correct: {summary['overall']['correct']}")
     print(f"  Accuracy: {summary['overall']['accuracy']:.2%}")
+    if 'llm_judge_accuracy' in summary['overall']:
+        print(f"  LLM Judge Total: {summary['overall']['llm_judge_total']}")
+        print(f"  LLM Judge Correct: {summary['overall']['llm_judge_correct']}")
+        print(f"  LLM Judge Accuracy: {summary['overall']['llm_judge_accuracy']:.2%}")
     
-    # Save summary
     output_file = output_dir / f"summary_{timestamp}.json"
     with open(output_file, 'w') as f:
         json.dump(summary, f, indent=2)
@@ -711,6 +860,16 @@ def main():
                         help='Maximum number of retries')
     parser.add_argument('--num-threads', type=int, default=1,
                         help='Number of parallel threads for API calls')
+    parser.add_argument('--use-llm-judge', action='store_true',
+                        help='Run LLM judge on saved results after inference')
+    parser.add_argument('--judge-api-base', type=str, default=None,
+                        help='API base URL for LLM judge (default: same as --api-base)')
+    parser.add_argument('--judge-model', type=str, default=None,
+                        help='Model name for LLM judge (default: same as --model)')
+    parser.add_argument('--judge-num-threads', type=int, default=None,
+                        help='Number of parallel threads for LLM judge (default: same as --num-threads)')
+    parser.add_argument('--judge-timeout', type=int, default=60,
+                        help='API timeout for LLM judge in seconds')
     
     args = parser.parse_args()
     
@@ -764,7 +923,46 @@ def main():
     
     # Calculate and save summary
     if all_results:
-        calculate_summary(all_results, output_dir)
+        if args.use_llm_judge:
+            judge_api_base = args.judge_api_base if args.judge_api_base else args.api_base
+            judge_model = args.judge_model if args.judge_model else args.model
+            judge_num_threads = args.judge_num_threads if args.judge_num_threads else args.num_threads
+            
+            judge_client = OpenAI(
+                base_url=judge_api_base.rstrip('/') + '/v1',
+                api_key=args.api_key if args.api_key else 'not-needed'
+            )
+            
+            llm_judge_results = {}
+            
+            for dataset_name in all_results.keys():
+                if dataset_name == 'material-figbench':
+                    csv_pattern = output_dir / "material-figbench_*.csv"
+                elif dataset_name == 'materialbench-choice':
+                    csv_pattern = output_dir / "materialbench-choice_*.csv"
+                elif dataset_name == 'materialbench-free':
+                    csv_pattern = output_dir / "materialbench-free_*.csv"
+                else:
+                    continue
+                
+                csv_files = list(output_dir.glob(csv_pattern.name))
+                csv_files = [f for f in csv_files if '_judged' not in str(f)]
+                
+                if csv_files:
+                    csv_file = max(csv_files, key=lambda f: f.stat().st_mtime)
+                    print(f"\nRunning LLM judge on {dataset_name} results: {csv_file}")
+                    
+                    judged_results = load_and_judge_csv(
+                        csv_file, judge_client, judge_model,
+                        judge_num_threads, args.judge_timeout
+                    )
+                    
+                    if judged_results:
+                        llm_judge_results[dataset_name] = judged_results
+            
+            calculate_summary(all_results, output_dir, llm_judge_results)
+        else:
+            calculate_summary(all_results, output_dir)
 
 
 if __name__ == '__main__':
