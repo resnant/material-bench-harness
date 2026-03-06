@@ -100,6 +100,7 @@ results/
 - `answer_range_2`: 正解範囲（数値範囲用）
 - `correct`: 正誤（True/False）
 - `llm_judge_correct`: LLM による正誤判定（--use-llm-judge オプション使用時）
+- `llm_judge_reason`: 不正解時の理由（--use-llm-judge オプション使用時）
 
 **MaterialBENCH choice:**
 - `question_id`: 問題 ID
@@ -109,6 +110,7 @@ results/
 - `correct_choice`: 正解
 - `correct`: 正誤
 - `llm_judge_correct`: LLM による正誤判定（--use-llm-judge オプション使用時）
+- `llm_judge_reason`: 不正解時の理由（--use-llm-judge オプション使用時）
 
 **MaterialBENCH free:**
 - `question_id`: 問題 ID
@@ -117,6 +119,7 @@ results/
 - `correct_answer`: 正解
 - `correct`: 正誤（完全一致または数値許容誤差）
 - `llm_judge_correct`: LLM による正誤判定（--use-llm-judge オプション使用時）
+- `llm_judge_reason`: 不正解時の理由（--use-llm-judge オプション使用時）
 
 #### サマリー JSON
 

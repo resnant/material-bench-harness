@@ -637,16 +637,23 @@ Criteria:
 - Numeric values within 1% error are acceptable
 - Notation variations are acceptable
 
-Respond with only "CORRECT" or "INCORRECT"."""
+Output format:
+- If correct: "CORRECT"
+- If incorrect: "INCORRECT: [reason]"
+
+Examples:
+- CORRECT
+- INCORRECT: The model predicted option (c), but the correct answer is (b).
+- INCORRECT: The predicted value 5.2 differs from the ground truth 3.8 by more than 1%."""
 
 
 def llm_judge_answer(problem, prediction, ground_truth, client, model, timeout=60):
     """
     Use LLM to judge if the prediction is correct compared to ground truth.
-    Returns True if CORRECT, False if INCORRECT or error.
+    Returns tuple of (is_correct: bool, reason: str or None).
     """
     if prediction is None or prediction == '':
-        return False
+        return (False, "Prediction is empty")
     
     prompt = f"""Problem: {problem}
 Model Prediction: {prediction}
@@ -663,10 +670,17 @@ Ground Truth: {ground_truth}"""
             messages=messages,
             timeout=timeout
         )
-        judgment = response.choices[0].message.content.strip().upper()
-        return "CORRECT" in judgment
-    except Exception:
-        return False
+        judgment = response.choices[0].message.content.strip()
+        
+        if judgment.upper().startswith("CORRECT"):
+            return (True, None)
+        elif judgment.upper().startswith("INCORRECT"):
+            reason = judgment.split(":", 1)[1].strip() if ":" in judgment else "Incorrect answer"
+            return (False, reason)
+        else:
+            return (False, f"Unable to parse judgment: {judgment}")
+    except Exception as e:
+        return (False, f"Error: {str(e)}")
 
 
 def llm_judge_sample(args_tuple):
@@ -685,10 +699,11 @@ def llm_judge_sample(args_tuple):
     else:
         ground_truth = ''
     
-    is_correct = llm_judge_answer(problem, prediction, ground_truth, client, model, timeout)
+    is_correct, reason = llm_judge_answer(problem, prediction, ground_truth, client, model, timeout)
     
     result = sample.copy()
     result['llm_judge_correct'] = is_correct
+    result['llm_judge_reason'] = reason
     return result
 
 
@@ -723,7 +738,16 @@ def run_llm_judge_on_results(results, problem_column, client, model, num_threads
                     pbar.update(1)
     
     correct_count = sum(1 for r in judged_results if r.get('llm_judge_correct', False))
+    incorrect_with_reason = [(r.get('question_id'), r.get('llm_judge_reason')) 
+                              for r in judged_results if not r.get('llm_judge_correct', False) and r.get('llm_judge_reason')]
+    
     print(f"LLM Judge Accuracy: {correct_count}/{len(judged_results)} ({correct_count/len(judged_results):.2%})")
+    if incorrect_with_reason:
+        print(f"\nIncorrect samples with reasons:")
+        for qid, reason in incorrect_with_reason[:5]:
+            print(f"  Q{qid}: {reason}")
+        if len(incorrect_with_reason) > 5:
+            print(f"  ... and {len(incorrect_with_reason) - 5} more")
     
     return judged_results
 
