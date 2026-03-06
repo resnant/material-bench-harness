@@ -146,6 +146,19 @@ results/
 }
 ```
 
+#### LLM Judge の理由出力
+
+`--use-llm-judge` オプションを使用すると、不正解だった場合に理由も出力されます。
+
+**出力例:**
+```
+INCORRECT: The model predicted option (c), but the correct answer is (b).
+INCORRECT: The predicted value 5.2 differs from the ground truth 3.8 by more than 1%.
+```
+
+**理由の表示:**
+LLM judge 実行後、コンソールに不正解サンプルの理由が最大 5 件表示されます。CSV ファイルには全てのサンプルの `llm_judge_reason` カラムとして保存されます。
+
 ## データセット
 
 ### MaterialFigBench
