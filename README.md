@@ -100,6 +100,7 @@ results/
 - `answer_range_2`: 正解範囲（数値範囲用）
 - `correct`: 正誤（True/False）
 - `llm_judge_correct`: LLM による正誤判定（--use-llm-judge オプション使用時）
+- `llm_judge_reason`: 不正解時の理由（--use-llm-judge オプション使用時）
 
 **MaterialBENCH choice:**
 - `question_id`: 問題 ID
@@ -109,6 +110,7 @@ results/
 - `correct_choice`: 正解
 - `correct`: 正誤
 - `llm_judge_correct`: LLM による正誤判定（--use-llm-judge オプション使用時）
+- `llm_judge_reason`: 不正解時の理由（--use-llm-judge オプション使用時）
 
 **MaterialBENCH free:**
 - `question_id`: 問題 ID
@@ -117,6 +119,7 @@ results/
 - `correct_answer`: 正解
 - `correct`: 正誤（完全一致または数値許容誤差）
 - `llm_judge_correct`: LLM による正誤判定（--use-llm-judge オプション使用時）
+- `llm_judge_reason`: 不正解時の理由（--use-llm-judge オプション使用時）
 
 #### サマリー JSON
 
@@ -142,6 +145,19 @@ results/
   }
 }
 ```
+
+#### LLM Judge の理由出力
+
+`--use-llm-judge` オプションを使用すると、不正解だった場合に理由も出力されます。
+
+**出力例:**
+```
+INCORRECT: The model predicted option (c), but the correct answer is (b).
+INCORRECT: The predicted value 5.2 differs from the ground truth 3.8 by more than 1%.
+```
+
+**理由の表示:**
+LLM judge 実行後、コンソールに不正解サンプルの理由が最大 5 件表示されます。CSV ファイルには全てのサンプルの `llm_judge_reason` カラムとして保存されます。
 
 ## データセット
 
