@@ -49,13 +49,32 @@ pixi run python scripts/run_benchmark.py \
   --max-samples 10 \
   --seed 42
 
-# 並列実行で高速化（3スレッド）
+# 並列実行で高速化（3 スレッド）
 pixi run python scripts/run_benchmark.py \
   --dataset materialbench-choice \
   --api-base http://localhost:8001 \
   --max-samples 10 \
   --num-threads 3 \
   --output-dir ./results
+
+# 既存の CSV 結果に LLM judge を適用（推論スキップ）
+pixi run python scripts/run_benchmark.py \
+  --llm-judge-only \
+  --judge-csv results/materialbench-free_20260307_000330.csv \
+  --api-base http://localhost:8001
+
+# 最新の CSV を自動検出して LLM judge（データセット指定）
+pixi run python scripts/run_benchmark.py \
+  --llm-judge-only \
+  --dataset materialbench-free \
+  --api-base http://localhost:8001 \
+  --judge-num-threads 20
+
+# 全データセットの最新結果に LLM judge
+pixi run python scripts/run_benchmark.py \
+  --llm-judge-only \
+  --dataset all \
+  --api-base http://localhost:8001
 ```
 
 ### オプション
@@ -73,7 +92,9 @@ pixi run python scripts/run_benchmark.py \
 | `--timeout` | API タイムアウト（秒） | `300` |
 | `--max-retries` | 最大リトライ回数 | `2` |
 | `--num-threads` | 並列スレッド数（1 でシーケンシャル） | `1` |
-| `--use-llm-judge` | LLM による評価を実行するフラグ | `False` |
+| `--use-llm-judge` | 推論後に LLM 評価を実行するフラグ | `False` |
+| `--llm-judge-only` | 推論をスキップして既存 CSV に LLM 評価のみ適用 | `False` |
+| `--judge-csv` | LLM 評価する CSV ファイル（--llm-judge-only 使用時） | `None` |
 | `--judge-api-base` | LLM judge 用 API ベース URL | `--api-base` と同じ |
 | `--judge-model` | LLM judge 用モデル名 | `--model` と同じ |
 | `--judge-num-threads` | LLM judge の並列スレッド数 | `--num-threads` と同じ |
@@ -86,7 +107,8 @@ results/
 ├── material-figbench_YYYYMMDD_HHMMSS.csv    # MaterialFigBench の結果
 ├── materialbench-choice_YYYYMMDD_HHMMSS.csv  # MaterialBENCH choice の結果
 ├── materialbench-free_YYYYMMDD_HHMMSS.csv    # MaterialBENCH free の結果
-└── summary_YYYYMMDD_HHMMSS.json              # 評価サマリー
+├── summary_YYYYMMDD_HHMMSS.json              # 評価サマリー
+└── *_judged.csv                              # LLM judge 結果
 ```
 
 #### CSV カラム
@@ -99,8 +121,8 @@ results/
 - `ground_truth`: 正解
 - `answer_range_2`: 正解範囲（数値範囲用）
 - `correct`: 正誤（True/False）
-- `llm_judge_correct`: LLM による正誤判定（--use-llm-judge オプション使用時）
-- `llm_judge_reason`: 不正解時の理由（--use-llm-judge オプション使用時）
+- `llm_judge_correct`: LLM による正誤判定（--use-llm-judge または --llm-judge-only オプション使用時）
+- `llm_judge_reason`: 不正解時の理由（--use-llm-judge または --llm-judge-only オプション使用時）
 
 **MaterialBENCH choice:**
 - `question_id`: 問題 ID
@@ -109,8 +131,8 @@ results/
 - `prediction`: モデルの回答（a/b/c/d）
 - `correct_choice`: 正解
 - `correct`: 正誤
-- `llm_judge_correct`: LLM による正誤判定（--use-llm-judge オプション使用時）
-- `llm_judge_reason`: 不正解時の理由（--use-llm-judge オプション使用時）
+- `llm_judge_correct`: LLM による正誤判定（--use-llm-judge または --llm-judge-only オプション使用時）
+- `llm_judge_reason`: 不正解時の理由（--use-llm-judge または --llm-judge-only オプション使用時）
 
 **MaterialBENCH free:**
 - `question_id`: 問題 ID
@@ -118,8 +140,8 @@ results/
 - `prediction`: モデルの回答
 - `correct_answer`: 正解
 - `correct`: 正誤（完全一致または数値許容誤差）
-- `llm_judge_correct`: LLM による正誤判定（--use-llm-judge オプション使用時）
-- `llm_judge_reason`: 不正解時の理由（--use-llm-judge オプション使用時）
+- `llm_judge_correct`: LLM による正誤判定（--use-llm-judge または --llm-judge-only オプション使用時）
+- `llm_judge_reason`: 不正解時の理由（--use-llm-judge または --llm-judge-only オプション使用時）
 
 #### サマリー JSON
 
@@ -148,7 +170,7 @@ results/
 
 #### LLM Judge の理由出力
 
-`--use-llm-judge` オプションを使用すると、不正解だった場合に理由も出力されます。
+`--use-llm-judge` または `--llm-judge-only` オプションを使用すると、不正解だった場合に理由も出力されます。
 
 **出力例:**
 ```
@@ -172,7 +194,7 @@ LLM judge 実行後、コンソールに不正解サンプルの理由が最大 
 - **free_dataset.json**: 自由記述問題（144 問）
 - **内容**: 原子量計算、結晶構造、拡散、相平衡など
 
-データソース: https://huggingface.co/datasets/omron-sinicx/
+データソース：https://huggingface.co/datasets/omron-sinicx/
 
 ## 正解判定ロジック
 
@@ -184,28 +206,17 @@ LLM judge 実行後、コンソールに不正解サンプルの理由が最大 
 ## TODO
 
 ### 短期
-- [ ] 数値表記の正規化改善（`2.4x10^-9` ↔ `2.4 × 10^{-9}`）
-- [ ] 単位の扱いの改善（`500 h` ↔ `500 hours`）
-- [ ] 部分正解の判定（単語の包含関係など）
-- [ ] エラーログの改善（失敗サンプルの理由記録）
 
 ### 中期
 - [x] バッチ処理の最適化（並列推論）
-- [ ] LLM による評価オプション（自由記述問題の柔軟な判定）
+- [x] LLM による評価オプション（自由記述問題の柔軟な判定）
+- [x] 既存結果への LLM judge 適用モード
 - [ ] flexeval 統合の検討
 - [ ] プログレス表示の改善（残り時間予測）
 
 ### 長期
-- [ ] 他のベンチマークへの拡張
 - [ ] 評価指標の拡充（F1 スコア，BLEU など）
-- [ ] Web UI による結果可視化
-- [ ] CI 統合（自動ベンチマーク実行）
 
-## 既知の問題
-
-- MaterialFigBench の画像処理に時間（初回ダウンロード時）
-- 正解判定が厳しすぎる場合あり（数値表記、単位の差異）
-- vLLM API のベース URL は `/v1` を付与が必要
 
 ## ライセンス
 
@@ -215,9 +226,9 @@ MIT
 
 | データセット | 件数 | スレッド数 | 実行時間 |
 |-------------|------|-----------|---------|
-| materialbench-choice | 10 | 1 | ~4分 |
-| materialbench-choice | 10 | 3 | ~2分44秒 |
-| materialbench-choice | 10 | 5 | ~2分 |
+| materialbench-choice | 10 | 1 | ~4 分 |
+| materialbench-choice | 10 | 3 | ~2 分 44 秒 |
+| materialbench-choice | 10 | 5 | ~2 分 |
 
 ## 実験結果と考察
 
@@ -228,6 +239,7 @@ MIT
 | 初期（完全一致） | 3.33% | 30 | 基本実装 |
 | 回答抽出＋5% 許容 | 30% | 10 | **Answer:**形式の抽出、数値許容誤差 |
 | 空白削除＋3% 許容 | **46%** | 50 | 空白完全削除、単位の扱い改善 |
+| LLM judge 適用 | **86%** | 144 | 意味的正しさの評価、有効数字・形式の違いを吸収 |
 
 ### 50 問実験の詳細（MaterialBENCH free）
 
@@ -313,7 +325,7 @@ MIT
 
 **MaterialFigBench の課題:**
 
-1. **複数画像の処理**: 2〜3枚の画像を使用する問題は処理時間が長く、タイムアウトのリスク
+1. **複数画像の処理**: 2〜3 枚の画像を使用する問題は処理時間が長く、タイムアウトのリスク
 2. **図表の正確な読み取り**: 相図、TTT 線図、応力 - ひずみ曲線などから数値を読み取る精度に課題
 3. **ミラー指数の表記**: `[\bar{1}\bar{1}\bar{1}]` など特殊な表記の扱い
 4. **段階的な計算問題**: 複数の図を参照して段階的に計算する問題の精度
