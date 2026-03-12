@@ -49,13 +49,32 @@ pixi run python scripts/run_benchmark.py \
   --max-samples 10 \
   --seed 42
 
-# 並列実行で高速化（3スレッド）
+# 並列実行で高速化（3 スレッド）
 pixi run python scripts/run_benchmark.py \
   --dataset materialbench-choice \
   --api-base http://localhost:8001 \
   --max-samples 10 \
   --num-threads 3 \
   --output-dir ./results
+
+# 既存の CSV 結果に LLM judge を適用（推論スキップ）
+pixi run python scripts/run_benchmark.py \
+  --llm-judge-only \
+  --judge-csv results/materialbench-free_20260307_000330.csv \
+  --api-base http://localhost:8001
+
+# 最新の CSV を自動検出して LLM judge（データセット指定）
+pixi run python scripts/run_benchmark.py \
+  --llm-judge-only \
+  --dataset materialbench-free \
+  --api-base http://localhost:8001 \
+  --judge-num-threads 20
+
+# 全データセットの最新結果に LLM judge
+pixi run python scripts/run_benchmark.py \
+  --llm-judge-only \
+  --dataset all \
+  --api-base http://localhost:8001
 ```
 
 ### オプション
@@ -73,7 +92,9 @@ pixi run python scripts/run_benchmark.py \
 | `--timeout` | API タイムアウト（秒） | `300` |
 | `--max-retries` | 最大リトライ回数 | `2` |
 | `--num-threads` | 並列スレッド数（1 でシーケンシャル） | `1` |
-| `--use-llm-judge` | LLM による評価を実行するフラグ | `False` |
+| `--use-llm-judge` | 推論後に LLM 評価を実行するフラグ | `False` |
+| `--llm-judge-only` | 推論をスキップして既存 CSV に LLM 評価のみ適用 | `False` |
+| `--judge-csv` | LLM 評価する CSV ファイル（--llm-judge-only 使用時） | `None` |
 | `--judge-api-base` | LLM judge 用 API ベース URL | `--api-base` と同じ |
 | `--judge-model` | LLM judge 用モデル名 | `--model` と同じ |
 | `--judge-num-threads` | LLM judge の並列スレッド数 | `--num-threads` と同じ |
@@ -86,7 +107,8 @@ results/
 ├── material-figbench_YYYYMMDD_HHMMSS.csv    # MaterialFigBench の結果
 ├── materialbench-choice_YYYYMMDD_HHMMSS.csv  # MaterialBENCH choice の結果
 ├── materialbench-free_YYYYMMDD_HHMMSS.csv    # MaterialBENCH free の結果
-└── summary_YYYYMMDD_HHMMSS.json              # 評価サマリー
+├── summary_YYYYMMDD_HHMMSS.json              # 評価サマリー
+└── *_judged.csv                              # LLM judge 結果
 ```
 
 #### CSV カラム
@@ -99,8 +121,8 @@ results/
 - `ground_truth`: 正解
 - `answer_range_2`: 正解範囲（数値範囲用）
 - `correct`: 正誤（True/False）
-- `llm_judge_correct`: LLM による正誤判定（--use-llm-judge オプション使用時）
-- `llm_judge_reason`: 不正解時の理由（--use-llm-judge オプション使用時）
+- `llm_judge_correct`: LLM による正誤判定（--use-llm-judge または --llm-judge-only オプション使用時）
+- `llm_judge_reason`: 不正解時の理由（--use-llm-judge または --llm-judge-only オプション使用時）
 
 **MaterialBENCH choice:**
 - `question_id`: 問題 ID
@@ -109,8 +131,8 @@ results/
 - `prediction`: モデルの回答（a/b/c/d）
 - `correct_choice`: 正解
 - `correct`: 正誤
-- `llm_judge_correct`: LLM による正誤判定（--use-llm-judge オプション使用時）
-- `llm_judge_reason`: 不正解時の理由（--use-llm-judge オプション使用時）
+- `llm_judge_correct`: LLM による正誤判定（--use-llm-judge または --llm-judge-only オプション使用時）
+- `llm_judge_reason`: 不正解時の理由（--use-llm-judge または --llm-judge-only オプション使用時）
 
 **MaterialBENCH free:**
 - `question_id`: 問題 ID
@@ -118,8 +140,8 @@ results/
 - `prediction`: モデルの回答
 - `correct_answer`: 正解
 - `correct`: 正誤（完全一致または数値許容誤差）
-- `llm_judge_correct`: LLM による正誤判定（--use-llm-judge オプション使用時）
-- `llm_judge_reason`: 不正解時の理由（--use-llm-judge オプション使用時）
+- `llm_judge_correct`: LLM による正誤判定（--use-llm-judge または --llm-judge-only オプション使用時）
+- `llm_judge_reason`: 不正解時の理由（--use-llm-judge または --llm-judge-only オプション使用時）
 
 #### サマリー JSON
 
@@ -148,7 +170,7 @@ results/
 
 #### LLM Judge の理由出力
 
-`--use-llm-judge` オプションを使用すると、不正解だった場合に理由も出力されます。
+`--use-llm-judge` または `--llm-judge-only` オプションを使用すると、不正解だった場合に理由も出力されます。
 
 **出力例:**
 ```
@@ -172,7 +194,7 @@ LLM judge 実行後、コンソールに不正解サンプルの理由が最大 
 - **free_dataset.json**: 自由記述問題（144 問）
 - **内容**: 原子量計算、結晶構造、拡散、相平衡など
 
-データソース: https://huggingface.co/datasets/omron-sinicx/
+データソース：https://huggingface.co/datasets/omron-sinicx/
 
 ## 正解判定ロジック
 
@@ -181,139 +203,45 @@ LLM judge 実行後、コンソールに不正解サンプルの理由が最大 
 - **数値範囲**: `0.0825-0.0975` 形式はモデル回答が範囲内か判定
 - **完全一致**: 上記正規化後、完全一致で判定
 
+## ベンチマーク結果
+
+### 通常正解率（完全一致）
+
+| モデル | FigBench | Choice | Free | Overall |
+|--------|----------|--------|------|---------|
+| Qwen3.5-397B-A17B | 22.14% (29/131) | 77.44% (127/164) | 52.08% (75/144) | 52.62% (231/439) |
+| Qwen3.5-27B | 22.90% (30/131) | 67.68% (111/164) | 49.31% (71/144) | 48.29% (212/439) |
+
+### LLM Judge 正解率
+
+| モデル | FigBench | Choice | Free | Overall |
+|--------|----------|--------|------|---------|
+| Qwen3.5-397B-A17B | 41.22% (54/131) | 77.44% (127/164) | 86.11% (124/144) | 69.48% (305/439) |
+| Qwen3.5-27B | 42.75% (56/131) | 67.68% (111/164) | 84.03% (121/144) | 65.60% (288/439) |
+
 ## TODO
 
 ### 短期
-- [ ] 数値表記の正規化改善（`2.4x10^-9` ↔ `2.4 × 10^{-9}`）
-- [ ] 単位の扱いの改善（`500 h` ↔ `500 hours`）
-- [ ] 部分正解の判定（単語の包含関係など）
-- [ ] エラーログの改善（失敗サンプルの理由記録）
 
 ### 中期
 - [x] バッチ処理の最適化（並列推論）
-- [ ] LLM による評価オプション（自由記述問題の柔軟な判定）
+- [x] LLM による評価オプション（自由記述問題の柔軟な判定）
+- [x] 既存結果への LLM judge 適用モード
 - [ ] flexeval 統合の検討
 - [ ] プログレス表示の改善（残り時間予測）
 
 ### 長期
-- [ ] 他のベンチマークへの拡張
 - [ ] 評価指標の拡充（F1 スコア，BLEU など）
-- [ ] Web UI による結果可視化
-- [ ] CI 統合（自動ベンチマーク実行）
 
-## 既知の問題
-
-- MaterialFigBench の画像処理に時間（初回ダウンロード時）
-- 正解判定が厳しすぎる場合あり（数値表記、単位の差異）
-- vLLM API のベース URL は `/v1` を付与が必要
 
 ## ライセンス
 
 MIT
 
-## 性能参考
-
-| データセット | 件数 | スレッド数 | 実行時間 |
-|-------------|------|-----------|---------|
-| materialbench-choice | 10 | 1 | ~4分 |
-| materialbench-choice | 10 | 3 | ~2分44秒 |
-| materialbench-choice | 10 | 5 | ~2分 |
-
-## 実験結果と考察
-
-### 改善の経過
-
-| 時点 | 正答率 | サンプル数 | 改善内容 |
-|------|--------|-----------|----------|
-| 初期（完全一致） | 3.33% | 30 | 基本実装 |
-| 回答抽出＋5% 許容 | 30% | 10 | **Answer:**形式の抽出、数値許容誤差 |
-| 空白削除＋3% 許容 | **46%** | 50 | 空白完全削除、単位の扱い改善 |
-
-### 50 問実験の詳細（MaterialBENCH free）
-
-**実験条件:**
-- データセット：MaterialBENCH free（自由記述問題）
-- サンプル数：50 問（ランダム抽出）
-- 並列スレッド：10
-- 処理時間：約 7 分 48 秒（1 問あたり平均 9.4 秒）
-
-**結果:**
-- 正解数：23 問
-- 正答率：46.0%
-
-**正解した問題の例:**
-- 問 29: 拡散束の計算（2.4 × 10^-9 kg/m²s）
-- 問 7: FCC 充填率（0.74）
-- 問 8,9: 密度計算（8.89 g/cm³, 7.31 g/cm³）
-- 問 58: 応力集中係数（2404 MPa）
-- 問 90: 電線直径（1.88 mm）
-
-**不正解の主要原因:**
-
-1. **複数値の形式の違い**
-   - モデル：`Greater than, Less than`
-   - 正解：`greater, less`
-   - 課題：単語の省略・接続詞の扱い
-
-2. **単位付きの数値**
-   - モデル：`6.05x10^28 atoms/m³`
-   - 正解：`6.05x10^28`
-   - 課題：単位の自動削除
-
-3. **有効数字の違い**
-   - モデル：`1.58`
-   - 正解：`1.6`
-   - 課題：3% 許容でも厳しい場合あり
-
-4. **記述形式の違い**
-   - モデル：`72.5 at% Sn, 27.5 at% Pb`
-   - 正解：`Sn: 72.5at%, Pb: 27.5at%`
-   - 課題：コロン・百分率の順序
-
-### 改善の余地
-
-#### 短期的な改善
-- [ ] 単位の自動削除：数値抽出時に単位（mm, MPa, kg/m³など）を除去
-- [ ] 有効数字の柔軟化：2 桁以上の違いがある場合のみ不正解
-- [ ] 複数値の順序正規化：カンマ区切り値をソートして比較
-- [ ] 化学式の正規化：`at%` と `at %` の統一
-
-#### 中長期的な改善
-- [ ] LLM による意味的評価：数値以外の概念問題を LLM が評価
-- [ ] 部分正解の導入：途中式が正しい場合に部分点
-- [ ] flexeval 統合：評価フレームワークの活用
-- [ ] エラー分析の自動化：不正解パターンの自動分類
-
-### MaterialFigBench 30 問の実験結果
-
-**実験条件:**
-- データセット：MaterialFigBench（画像＋テキスト問題）
-- サンプル数：30 問（ランダム抽出）
-- 並列スレッド：10
-- 処理時間：約 45 分（1 問あたり平均 90 秒）
-- タイムアウト：1 問（API エラー）
-
-**結果:**
-- 正解数：5 問
-- 正答率：16.7%
-
-**正解した問題:**
-- 問 26: 作業応力（125 MPa）
-- 問 90: 等温変態（bainite）
-- 問 76: 混合則（127 HB）
-- 問 1: ミラー指数（[1 2 0]）
-- 問 54: 臨界分解せん断応力（0.45 MPa）
-
-**MaterialBENCH free との比較:**
-
-| データセット | 正答率 | 特徴 |
-|-------------|--------|------|
-| MaterialBENCH free | 46.0% | テキストのみ、計算問題中心 |
-| MaterialFigBench | 16.7% | 画像＋テキスト、図表読み取り |
 
 **MaterialFigBench の課題:**
 
-1. **複数画像の処理**: 2〜3枚の画像を使用する問題は処理時間が長く、タイムアウトのリスク
+1. **複数画像の処理**: 2〜3 枚の画像を使用する問題は処理時間が長く、タイムアウトのリスク
 2. **図表の正確な読み取り**: 相図、TTT 線図、応力 - ひずみ曲線などから数値を読み取る精度に課題
 3. **ミラー指数の表記**: `[\bar{1}\bar{1}\bar{1}]` など特殊な表記の扱い
 4. **段階的な計算問題**: 複数の図を参照して段階的に計算する問題の精度

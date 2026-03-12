@@ -8,6 +8,11 @@ Usage:
     python scripts/run_benchmark.py --dataset materialbench-free --api-base http://localhost:8001
     python scripts/run_benchmark.py --dataset all --api-base http://localhost:8001
     python scripts/run_benchmark.py --dataset all --api-base http://localhost:8001 --use-llm-judge
+    
+    # LLM judge only mode (skip inference, judge existing CSV)
+    python scripts/run_benchmark.py --llm-judge-only --judge-csv results/materialbench-free_20260307_000330.csv --api-base http://localhost:8001
+    python scripts/run_benchmark.py --llm-judge-only --dataset materialbench-free --api-base http://localhost:8001
+    python scripts/run_benchmark.py --llm-judge-only --dataset all --api-base http://localhost:8001
 """
 
 import argparse
@@ -861,7 +866,7 @@ def calculate_summary(all_results, output_dir, llm_judge_results=None):
 
 def main():
     parser = argparse.ArgumentParser(description='Material Bench Benchmark Runner')
-    parser.add_argument('--dataset', type=str, required=True,
+    parser.add_argument('--dataset', type=str, required=False, default=None,
                         choices=['material-figbench', 'materialbench-choice', 'materialbench-free', 'all'],
                         help='Dataset to run benchmark on')
     parser.add_argument('--output-dir', type=str, default='./results',
@@ -886,6 +891,10 @@ def main():
                         help='Number of parallel threads for API calls')
     parser.add_argument('--use-llm-judge', action='store_true',
                         help='Run LLM judge on saved results after inference')
+    parser.add_argument('--llm-judge-only', action='store_true',
+                        help='Run LLM judge only on existing CSV results (skip inference)')
+    parser.add_argument('--judge-csv', type=str, default=None,
+                        help='Specific CSV file to judge (used with --llm-judge-only)')
     parser.add_argument('--judge-api-base', type=str, default=None,
                         help='API base URL for LLM judge (default: same as --api-base)')
     parser.add_argument('--judge-model', type=str, default=None,
@@ -897,11 +906,104 @@ def main():
     
     args = parser.parse_args()
     
+    # Validate arguments
+    if args.llm_judge_only:
+        if not args.judge_csv and not args.dataset:
+            parser.error('--llm-judge-only requires either --judge-csv or --dataset')
+    elif not args.dataset:
+        parser.error('--dataset is required (or use --llm-judge-only)')
+    
     # Create output directory
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    # Initialize API client
+    # LLM judge only mode
+    if args.llm_judge_only:
+        judge_api_base = args.judge_api_base if args.judge_api_base else args.api_base
+        judge_model = args.judge_model if args.judge_model else args.model
+        judge_num_threads = args.judge_num_threads if args.judge_num_threads else args.num_threads
+        
+        judge_client = OpenAI(
+            base_url=judge_api_base.rstrip('/') + '/v1',
+            api_key=args.api_key if args.api_key else 'not-needed'
+        )
+        
+        llm_judge_results = {}
+        all_results = {}
+        
+        if args.judge_csv:
+            # Judge specific CSV file
+            csv_file = Path(args.judge_csv)
+            if not csv_file.exists():
+                print(f"Error: CSV file not found: {csv_file}")
+                return
+            
+            print(f"\nRunning LLM judge on: {csv_file}")
+            judged_results = load_and_judge_csv(
+                csv_file, judge_client, judge_model,
+                judge_num_threads, args.judge_timeout
+            )
+            
+            if judged_results:
+                # Determine dataset name from filename
+                filename = csv_file.name
+                if 'material-figbench' in filename:
+                    dataset_name = 'material-figbench'
+                elif 'materialbench-choice' in filename:
+                    dataset_name = 'materialbench-choice'
+                elif 'materialbench-free' in filename:
+                    dataset_name = 'materialbench-free'
+                else:
+                    dataset_name = 'unknown'
+                
+                llm_judge_results[dataset_name] = judged_results
+                all_results[dataset_name] = judged_results
+                
+                # Save summary
+                calculate_summary(all_results, output_dir, llm_judge_results)
+        else:
+            # Judge latest CSV for specified dataset(s)
+            datasets_to_run = []
+            if args.dataset == 'all':
+                datasets_to_run = ['material-figbench', 'materialbench-choice', 'materialbench-free']
+            else:
+                datasets_to_run = [args.dataset]
+            
+            for dataset_name in datasets_to_run:
+                if dataset_name == 'material-figbench':
+                    csv_pattern = output_dir / "material-figbench_*.csv"
+                elif dataset_name == 'materialbench-choice':
+                    csv_pattern = output_dir / "materialbench-choice_*.csv"
+                elif dataset_name == 'materialbench-free':
+                    csv_pattern = output_dir / "materialbench-free_*.csv"
+                else:
+                    continue
+                
+                csv_files = list(output_dir.glob(csv_pattern.name))
+                csv_files = [f for f in csv_files if '_judged' not in str(f)]
+                
+                if csv_files:
+                    csv_file = max(csv_files, key=lambda f: f.stat().st_mtime)
+                    print(f"\nRunning LLM judge on {dataset_name} results: {csv_file}")
+                    
+                    judged_results = load_and_judge_csv(
+                        csv_file, judge_client, judge_model,
+                        judge_num_threads, args.judge_timeout
+                    )
+                    
+                    if judged_results:
+                        llm_judge_results[dataset_name] = judged_results
+                        all_results[dataset_name] = judged_results
+                else:
+                    print(f"Warning: No CSV files found for {dataset_name}")
+            
+            # Save summary
+            if all_results:
+                calculate_summary(all_results, output_dir, llm_judge_results)
+        
+        return
+    
+    # Normal benchmark mode
     client = OpenAI(
         base_url=args.api_base.rstrip('/') + '/v1',
         api_key=args.api_key if args.api_key else 'not-needed'
