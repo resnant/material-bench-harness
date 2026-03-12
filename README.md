@@ -90,7 +90,8 @@ CSV には `question_id`, `prediction`, `correct` 等のカラムが含まれま
 
 ## データソース
 
-https://huggingface.co/datasets/omron-sinicx/
+- [MaterialBENCH](https://huggingface.co/datasets/omron-sinicx/MaterialBENCH)
+- [MaterialFigBench](https://huggingface.co/datasets/omron-sinicx/MaterialFigBench)
 
 ## ライセンス
 
