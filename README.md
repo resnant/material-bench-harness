@@ -76,14 +76,16 @@ CSV には `question_id`, `prediction`, `correct` 等のカラムが含まれま
 
 ![Benchmark Results](./asset/benchmark_results.png)
 
-### 通常正解率（完全一致）
+### 正解率（完全一致）
 
 | モデル | FigBench | Choice | Free | Overall |
 |--------|----------|--------|------|---------|
 | Qwen3.5-397B-A17B | 22.14% (29/131) | 77.44% (127/164) | 52.08% (75/144) | 52.62% (231/439) |
 | Qwen3.5-27B | 22.90% (30/131) | 67.68% (111/164) | 49.31% (71/144) | 48.29% (212/439) |
 
-### LLM Judge 正解率
+### LLM Judgeによる正解率（意味的一致）
+
+ - `--judge-model = "Qwen/Qwen3.5-397B-A17B-FP8"`
 
 | モデル | FigBench | Choice | Free | Overall |
 |--------|----------|--------|------|---------|
