@@ -4,11 +4,13 @@ Material science ベンチマーク（MaterialFigBench, MaterialBENCH）の推�
 
 ## 概要
 
-| データセット | 形式 | 問題数 |
-|---|---|---|
-| **MaterialFigBench** | 画像＋テキスト（マルチモーダル） | 137 問 |
-| **MaterialBENCH choice** | 4 択問題 | 164 問 |
-| **MaterialBENCH free** | 自由記述問題 | 144 問 |
+| データセット | 形式 | 問題数 | データソース |
+|---|---|---|---|
+| **MaterialFigBench** | 画像＋テキスト（マルチモーダル） | 137 問 | [HuggingFace](https://huggingface.co/datasets/omron-sinicx/MaterialFigBench) / [論文](https://arxiv.org/abs/2409.03161) |
+| **MaterialBENCH choice** | 4 択問題 | 164 問 | [HuggingFace](https://huggingface.co/datasets/omron-sinicx/MaterialBENCH) / [論文](https://arxiv.org/abs/2603.11414) |
+| **MaterialBENCH free** | 自由記述問題 | 144 問 | 同上 |
+
+> 注意: これは非公式実装であり、論文の結果を正確に再現することを目的としたものではありません。
 
 OpenAI 互換 API（vLLM など）を使用して推論・評価を実行します。
 
@@ -73,8 +75,11 @@ results/
 CSV には `question_id`, `prediction`, `correct` 等のカラムが含まれます。`--use-llm-judge` 使用時は `llm_judge_correct`, `llm_judge_reason` も追加されます。
 
 ## ベンチマーク結果
+> **注:** MaterialFigBenchはデータソースの一部画像ファイルの不備により6問を除外し、現在 131/137 問で評価済み。元データ修正後に再評価予定です。
 
 ![Benchmark Results](./asset/benchmark_results.png)
+
+- 結果の追加に関するpull requestも歓迎します
 
 ### 正解率（完全一致）
 
@@ -92,10 +97,6 @@ CSV には `question_id`, `prediction`, `correct` 等のカラムが含まれま
 | Qwen3.5-397B-A17B | 41.22% (54/131) | 77.44% (127/164) | 86.11% (124/144) | 69.48% (305/439) |
 | Qwen3.5-27B | 42.75% (56/131) | 67.68% (111/164) | 84.03% (121/144) | 65.60% (288/439) |
 
-## データソース
-
-- [MaterialBENCH](https://huggingface.co/datasets/omron-sinicx/MaterialBENCH)
-- [MaterialFigBench](https://huggingface.co/datasets/omron-sinicx/MaterialFigBench)
 
 ## ライセンス
 
