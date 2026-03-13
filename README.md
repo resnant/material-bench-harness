@@ -74,6 +74,8 @@ CSV には `question_id`, `prediction`, `correct` 等のカラムが含まれま
 
 ## ベンチマーク結果
 
+![Benchmark Results](./asset/benchmark_results.png)
+
 ### 通常正解率（完全一致）
 
 | モデル | FigBench | Choice | Free | Overall |
